@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
+import uuid
 import sqlite3
 from typing import Any
-
+from datetime import datetime, timezone
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -80,5 +80,70 @@ def get_equipment_history(conn: sqlite3.Connection, asset_id: str) -> list[dict[
         ORDER BY logged_at DESC, id DESC
         """,
         (asset_id.strip().upper(),),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+def create_ticket(
+    conn: sqlite3.Connection,
+    asset_id: str,
+    request_type: str,
+    raw_description: str,
+    category: str,
+    priority: str,
+    recommended_action: str,
+) -> str:
+    """Create a triaged maintenance ticket and record a Ticket Created log entry."""
+    clean_asset_id = asset_id.strip().upper()
+    timestamp = _now_iso()
+    date_part = datetime.now(timezone.utc).strftime("%Y%m%d")
+    short_hash = uuid.uuid4().hex[:4].upper()
+    ticket_code = f"TCK-{date_part}-{short_hash}"
+
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO tickets (
+                ticket_code, asset_id, request_type, raw_description,
+                category, priority, recommended_action, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Open', ?)
+            """,
+            (
+                ticket_code,
+                clean_asset_id,
+                request_type.strip(),
+                raw_description.strip(),
+                category,
+                priority,
+                recommended_action,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO maintenance_logs (
+                asset_id, ticket_code, event_type, summary,
+                parts_used, technician_name, logged_at
+            ) VALUES (?, ?, 'Ticket Created', ?, 'None', 'AI Triage System', ?)
+            """,
+            (
+                clean_asset_id,
+                ticket_code,
+                f"[{priority}] {category}: {raw_description.strip()}",
+                timestamp,
+            ),
+        )
+
+    return ticket_code
+
+
+def list_tickets(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return all tickets joined with basic equipment info, newest first."""
+    rows = conn.execute(
+        """
+        SELECT t.*, e.equipment_type, e.model_name, e.customer_name, e.kitchen_location
+        FROM tickets t
+        JOIN equipment e ON t.asset_id = e.asset_id
+        ORDER BY t.created_at DESC, t.id DESC
+        """
     ).fetchall()
     return [dict(row) for row in rows]
