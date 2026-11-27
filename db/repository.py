@@ -147,3 +147,42 @@ def list_tickets(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         """
     ).fetchall()
     return [dict(row) for row in rows]
+
+def add_maintenance_log(
+    conn: sqlite3.Connection,
+    asset_id: str,
+    event_type: str,
+    summary: str,
+    parts_used: str = "None",
+    technician_name: str = "Field Engineer",
+    ticket_code: str | None = None,
+    close_ticket: bool = False,
+) -> None:
+    """Record a maintenance/repair/inspection event and optionally close its linked ticket."""
+    clean_asset_id = asset_id.strip().upper()
+    clean_ticket = ticket_code.strip().upper() if ticket_code else None
+    timestamp = _now_iso()
+
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO maintenance_logs (
+                asset_id, ticket_code, event_type, summary,
+                parts_used, technician_name, logged_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                clean_asset_id,
+                clean_ticket,
+                event_type.strip(),
+                summary.strip(),
+                parts_used.strip() or "None",
+                technician_name.strip() or "Field Engineer",
+                timestamp,
+            ),
+        )
+        if close_ticket and clean_ticket:
+            conn.execute(
+                "UPDATE tickets SET status = 'Closed' WHERE ticket_code = ?",
+                (clean_ticket,),
+            )
